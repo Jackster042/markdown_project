@@ -1,31 +1,69 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { createLazyFileRoute } from '@tanstack/react-router'
-import { FileDown, Copy, Trash2, Sparkles, Loader2, Check } from 'lucide-react'
+import { FileDown, Copy, Trash2, Sparkles, Loader2, Check, Save } from 'lucide-react'
 import { useConvertText } from '../hooks/useConvertText'
 import { downloadMarkdown } from '../utils/downloadMarkdown'
+import { useLocalStorage } from '../hooks/useLocalStorage'
+import { useDebouncedCallback } from '../hooks/useDebounce'
+
+const DRAFT_KEY = 'md-convert-draft'
 
 export const Route = createLazyFileRoute('/')({
   component: HomePage,
 })
 
 function HomePage() {
-  const [inputText, setInputText] = useState('')
+  // Persisted draft in localStorage
+  const [savedDraft, setSavedDraft] = useLocalStorage<string>(DRAFT_KEY, '')
+  
+  // Local state (initialized from saved draft)
+  const [inputText, setInputText] = useState(savedDraft)
   const [convertedMarkdown, setConvertedMarkdown] = useState('')
   const [copied, setCopied] = useState(false)
+  const [draftSaved, setDraftSaved] = useState(false)
 
   const mutation = useConvertText()
+
+  // Debounced auto-save (1 second delay)
+  const debouncedSave = useDebouncedCallback((text: string) => {
+    setSavedDraft(text)
+    setDraftSaved(true)
+    setTimeout(() => setDraftSaved(false), 1500)
+  }, 1000)
+
+  // Auto-save when input changes
+  useEffect(() => {
+    if (inputText && !convertedMarkdown) {
+      debouncedSave(inputText)
+    }
+  }, [inputText, convertedMarkdown, debouncedSave])
 
   const handleConvert = () => {
     if (!inputText.trim()) return
     
+    // Store original text for error recovery
+    const originalText = inputText
+    
+    // Optimistic update: show immediate feedback
+    const lines = inputText.trim().split('\n')
+    const title = lines[0].slice(0, 50) || 'Converting...'
+    const optimisticPreview = `# ${title}\n\n⏳ Converting...`
+    setInputText(optimisticPreview)
+    
     mutation.mutate(
-      { text: inputText },
+      { text: originalText },
       {
         onSuccess: (data) => {
           if (data.success) {
-            setInputText(data.markdown)         // Replace input with converted text
-            setConvertedMarkdown(data.markdown) // Keep for download/copy
+            setInputText(data.markdown)
+            setConvertedMarkdown(data.markdown)
+            // Clear draft after successful conversion
+            setSavedDraft('')
           }
+        },
+        onError: () => {
+          // Revert on error
+          setInputText(originalText)
         },
       }
     )
@@ -56,6 +94,7 @@ function HomePage() {
   const handleClear = () => {
     setInputText('')
     setConvertedMarkdown('')
+    setSavedDraft('')
     mutation.reset()
   }
 
@@ -78,16 +117,43 @@ function HomePage() {
       <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
         {/* Textarea Section */}
         <div className="p-6">
-          <label htmlFor="text-input" className="mb-2 block text-sm font-medium text-zinc-700 dark:text-zinc-300">
-            Raw Text Input
-          </label>
+          <div className="mb-2 flex items-center justify-between">
+            <label htmlFor="text-input" className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              {hasResult ? 'Markdown Output' : 'Raw Text Input'}
+            </label>
+            <div className="flex items-center gap-2">
+              {/* Auto-save indicator */}
+              {draftSaved && !hasResult && (
+                <span className="inline-flex items-center gap-1 text-xs text-zinc-400 dark:text-zinc-500">
+                  <Save className="h-3 w-3" />
+                  Draft saved
+                </span>
+              )}
+              {hasResult && (
+                <span className="inline-flex items-center gap-1.5 rounded-md bg-zinc-800 px-2 py-1 text-xs font-medium text-zinc-300">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                  .md
+                </span>
+              )}
+            </div>
+          </div>
           <textarea
             id="text-input"
             rows={12}
             value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
+            onChange={(e) => {
+              setInputText(e.target.value)
+              // Clear converted state when user edits
+              if (hasResult) {
+                setConvertedMarkdown('')
+              }
+            }}
             placeholder="Paste your text here..."
-            className="w-full resize-none rounded-lg border border-zinc-300 bg-zinc-50 px-4 py-3 text-zinc-900 placeholder-zinc-400 transition-all focus:border-emerald-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder-zinc-500 dark:focus:border-emerald-500 dark:focus:bg-zinc-900"
+            className={`w-full resize-none rounded-lg border px-4 py-3 transition-all focus:outline-none focus:ring-2 ${
+              hasResult
+                ? 'border-zinc-700 bg-zinc-900 font-mono text-sm leading-relaxed text-zinc-100 placeholder-zinc-500 focus:border-zinc-600 focus:ring-zinc-500/20'
+                : 'border-zinc-300 bg-zinc-50 text-zinc-900 placeholder-zinc-400 focus:border-emerald-500 focus:bg-white focus:ring-emerald-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder-zinc-500 dark:focus:border-emerald-500 dark:focus:bg-zinc-900'
+            }`}
           />
           <div className="mt-2 flex items-center justify-between">
             <span className="text-xs text-zinc-400 dark:text-zinc-500">
@@ -172,6 +238,7 @@ function HomePage() {
           <li>• Paste any unformatted text to convert it to Markdown</li>
           <li>• The converter will structure headings, lists, and paragraphs</li>
           <li>• Download as .md file or copy directly to clipboard</li>
+          <li>• Your draft is auto-saved and will persist on page reload</li>
         </ul>
       </div>
     </div>
