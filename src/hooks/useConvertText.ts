@@ -50,11 +50,8 @@ async function convertText(input: ConversionInput): Promise<ConversionResponse> 
   // Check cache first
   const cached = getCachedResponse(input.text)
   if (cached) {
-    console.log('[Cache] Hit - returning cached conversion')
     return cached
   }
-  
-  console.log('[Cache] Miss - performing conversion')
   
   // Simulate AI processing delay
   await new Promise(resolve => setTimeout(resolve, 500))
